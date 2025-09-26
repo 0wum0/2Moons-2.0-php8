@@ -1,642 +1,833 @@
 <?php
 
+declare(strict_types=1);
+
 /**
- *  2Moons 
- *   by Jan-Otto Kröpke 2009-2016
- *
- * For the full copyright and license information, please view the LICENSE
+ * 2Moons - Modernized General Functions
+ * 
+ * Modernized general utility functions with PHP 8.3 compatibility,
+ * improved security, and enhanced functionality for the futuristic 2Moons game.
  *
  * @package 2Moons
  * @author Jan-Otto Kröpke <slaver7@gmail.com>
+ * @author Modernized by AI Assistant
  * @copyright 2009 Lucky
  * @copyright 2016 Jan-Otto Kröpke <slaver7@gmail.com>
- * @licence MIT
- * @version 1.8.0
+ * @copyright 2024 Modernized Version
+ * @license MIT
+ * @version 2.0.0
  * @link https://github.com/jkroepke/2Moons
  */
 
-function getFactors($USER, $Type = 'basic', $TIME = NULL) {
-	global $PLANET, $resource, $pricelist, $reslist;
-	if(empty($TIME))
-		$TIME	= TIMESTAMP;
-	
-	$bonusList	= BuildFunctions::getBonusList();
-	$factor		= ArrayUtil::combineArrayWithSingleElement($bonusList, 0);
-	
-	foreach($reslist['bonus'] as $elementID) {
-		$bonus = $pricelist[$elementID]['bonus'];
-		
-		if (isset($PLANET[$resource[$elementID]])) {
-			$elementLevel = $PLANET[$resource[$elementID]];
-		} elseif (isset($USER[$resource[$elementID]])) {
-			$elementLevel = $USER[$resource[$elementID]];
-		} else {
-			continue;
-		}
-		
-		if(in_array($elementID, $reslist['dmfunc'])) {
-			if(DMExtra($elementLevel, $TIME, false, true)) {
-				continue;
-			}
-			
-			foreach($bonusList as $bonusKey)
-			{
-				$factor[$bonusKey]	+= $bonus[$bonusKey][0];
-			}
-		} else {
-			foreach($bonusList as $bonusKey)
-			{
-				$factor[$bonusKey]	+= $elementLevel * $bonus[$bonusKey][0];
-			}
-		}
-	}
-	
-	return $factor;
-}
+/**
+ * =============================================================================
+ * GAME FACTORS & BONUSES
+ * =============================================================================
+ */
 
-function getPlanets($USER)
+/**
+ * Get game factors for calculations
+ *
+ * @param array $user User data
+ * @param string $type Factor type ('basic', 'production', 'research', etc.)
+ * @param int|null $time Timestamp (default: current time)
+ * @return array Game factors
+ */
+function getFactors(array $user, string $type = 'basic', ?int $time = null): array
 {
-	if(isset($USER['PLANETS']))
-		return $USER['PLANETS'];
-
-	$order = $USER['planet_sort_order'] == 1 ? "DESC" : "ASC" ;
-
-	$sql = "SELECT id, name, galaxy, system, planet, planet_type, image, b_building, b_building_id
-			FROM %%PLANETS%% WHERE id_owner = :userId AND destruyed = :destruyed ORDER BY ";
-
-	switch($USER['planet_sort'])
-	{
-		case 0:
-			$sql	.= 'id '.$order;
-			break;
-		case 1:
-			$sql	.= 'galaxy, system, planet, planet_type '.$order;
-			break;
-		case 2:
-			$sql	.= 'name '.$order;
-			break;
-	}
-
-	$planetsResult = Database::get()->select($sql, array(
-		':userId'		=> $USER['id'],
-		':destruyed'	=> 0
-   	));
-	
-	$planetsList = array();
-
-	foreach($planetsResult as $planetRow) {
-		$planetsList[$planetRow['id']]	= $planetRow;
-	}
-
-	return $planetsList;
+    global $PLANET, $resource, $pricelist, $reslist;
+    
+    if ($time === null) {
+        $time = TIMESTAMP;
+    }
+    
+    $bonusList = BuildFunctions::getBonusList();
+    $factor = ArrayUtil::combineArrayWithSingleElement($bonusList, 0);
+    
+    foreach ($reslist['bonus'] as $elementID) {
+        $bonus = $pricelist[$elementID]['bonus'];
+        
+        $elementLevel = 0;
+        if (isset($PLANET[$resource[$elementID]])) {
+            $elementLevel = (int) $PLANET[$resource[$elementID]];
+        } elseif (isset($user[$resource[$elementID]])) {
+            $elementLevel = (int) $user[$resource[$elementID]];
+        } else {
+            continue;
+        }
+        
+        if (in_array($elementID, $reslist['dmfunc'], true)) {
+            if (DMExtra($elementLevel, $time, false, true)) {
+                continue;
+            }
+            
+            foreach ($bonusList as $bonusKey) {
+                $factor[$bonusKey] += $bonus[$bonusKey][0];
+            }
+        } else {
+            foreach ($bonusList as $bonusKey) {
+                $factor[$bonusKey] += $elementLevel * $bonus[$bonusKey][0];
+            }
+        }
+    }
+    
+    return $factor;
 }
 
-function get_timezone_selector() {
-	// New Timezone Selector, better support for changes in tzdata (new russian timezones, e.g.)
-	// http://www.php.net/manual/en/datetimezone.listidentifiers.php
-	
-	$timezones = array();
-	$timezone_identifiers = DateTimeZone::listIdentifiers();
+/**
+ * =============================================================================
+ * PLANET MANAGEMENT
+ * =============================================================================
+ */
 
-	foreach($timezone_identifiers as $value )
-	{
-		if ( preg_match( '/^(America|Antartica|Arctic|Asia|Atlantic|Europe|Indian|Pacific)\//', $value ) )
-		{
-			$ex		= explode('/',$value); //obtain continent,city
-			$city	= isset($ex[2])? $ex[1].' - '.$ex[2]:$ex[1]; //in case a timezone has more than one
-			$timezones[$ex[0]][$value] = str_replace('_', ' ', $city);
-		}
-	}
-	return $timezones; 
-}
-
-function locale_date_format($format, $time, $LNG = NULL)
+/**
+ * Get user's planets
+ *
+ * @param array $user User data
+ * @return array Planets list
+ */
+function getPlanets(array $user): array
 {
-	// Workaround for locale Names.
+    if (isset($user['PLANETS'])) {
+        return $user['PLANETS'];
+    }
 
-	if(!isset($LNG)) {
-		global $LNG;
-	}
-	
-	$weekDay	= date('w', $time);
-	$months		= date('n', $time) - 1;
-	
-	$format     = str_replace(array('D', 'M'), array('$D$', '$M$'), $format);
-	$format		= str_replace('$D$', addcslashes($LNG['week_day'][$weekDay], 'A..z'), $format);
-	$format		= str_replace('$M$', addcslashes($LNG['months'][$months], 'A..z'), $format);
-	
-	return $format;
+    $order = $user['planet_sort_order'] == 1 ? 'DESC' : 'ASC';
+    $sql = 'SELECT id, name, galaxy, system, planet, planet_type, image, b_building, b_building_id
+            FROM %%PLANETS%% WHERE id_owner = :userId AND destruyed = :destruyed ORDER BY ';
+
+    switch ($user['planet_sort']) {
+        case 0:
+            $sql .= 'id ' . $order;
+            break;
+        case 1:
+            $sql .= 'galaxy, system, planet, planet_type ' . $order;
+            break;
+        case 2:
+            $sql .= 'name ' . $order;
+            break;
+        default:
+            $sql .= 'id ' . $order;
+            break;
+    }
+
+    $planetsResult = Database::get()->select($sql, [
+        ':userId' => $user['id'],
+        ':destruyed' => 0
+    ]);
+    
+    $planetsList = [];
+    foreach ($planetsResult as $planetRow) {
+        $planetsList[$planetRow['id']] = $planetRow;
+    }
+
+    return $planetsList;
 }
 
-function _date($format, $time = null, $toTimeZone = null, $LNG = NULL)
+/**
+ * Calculate maximum planet fields
+ *
+ * @param array $planet Planet data
+ * @return int Maximum fields
+ */
+function calculateMaxPlanetFields(array $planet): int
 {
-	if(!isset($time))
-	{
-		$time	= TIMESTAMP;
-	}else{
-		$time 	= floor($time); 
-	}
-
-	if(isset($toTimeZone))
-	{
-		$date = new DateTime();
-		if(method_exists($date, 'setTimestamp'))
-		{	// PHP > 5.3			
-			$date->setTimestamp($time);
-		} else {
-			// PHP < 5.3
-			$tempDate = getdate((int) $time);
-			$date->setDate($tempDate['year'], $tempDate['mon'], $tempDate['mday']);
-			$date->setTime($tempDate['hours'], $tempDate['minutes'], $tempDate['seconds']);
-		}
-		
-		$time	-= $date->getOffset();
-		try {
-			$date->setTimezone(new DateTimeZone($toTimeZone));
-		} catch (Exception $e) {
-			
-		}
-		$time	+= $date->getOffset();
-	}
-	
-	$format	= locale_date_format($format, $time, $LNG);
-	return date($format, $time);
+    global $resource;
+    
+    return (int) $planet['field_max'] + 
+           ((int) $planet[$resource[33]] * FIELDS_BY_TERRAFORMER) + 
+           ((int) $planet[$resource[41]] * FIELDS_BY_MOONBASIS_LEVEL);
 }
 
-function ValidateAddress($address) {
-	
-	if(function_exists('filter_var')) {
-		return filter_var($address, FILTER_VALIDATE_EMAIL) !== FALSE;
-	} else {
-		/*
-			Regex expression from swift mailer (http://swiftmailer.org)
-			RFC 2822
-		*/
-		return preg_match('/^(?:(?:(?:(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))*(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))|(?:(?:[ \t]*(?:\r\n))?[ \t])))?(?:[a-zA-Z0-9!#\$%&\'\*\+\-\/=\?\^_\{\}\|~]+(\.[a-zA-Z0-9!#\$%&\'\*\+\-\/=\?\^_\{\}\|~]+)*)+(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))*(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))|(?:(?:[ \t]*(?:\r\n))?[ \t])))?)|(?:(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))*(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))|(?:(?:[ \t]*(?:\r\n))?[ \t])))?"((?:(?:[ \t]*(?:\r\n))?[ \t])?(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21\x23-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])))*(?:(?:[ \t]*(?:\r\n))?[ \t])?"(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))*(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))|(?:(?:[ \t]*(?:\r\n))?[ \t])))?))@(?:(?:(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))*(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))|(?:(?:[ \t]*(?:\r\n))?[ \t])))?(?:[a-zA-Z0-9!#\$%&\'\*\+\-\/=\?\^_\{\}\|~]+(\.[a-zA-Z0-9!#\$%&\'\*\+\-\/=\?\^_\{\}\|~]+)*)+(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))*(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))|(?:(?:[ \t]*(?:\r\n))?[ \t])))?)|(?:(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))*(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))|(?:(?:[ \t]*(?:\r\n))?[ \t])))?\[((?:(?:[ \t]*(?:\r\n))?[ \t])?(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x5A\x5E-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])))*?(?:(?:[ \t]*(?:\r\n))?[ \t])?\](?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))*(?:(?:(?:(?:[ \t]*(?:\r\n))?[ \t])?(\((?:(?:(?:[ \t]*(?:\r\n))?[ \t])|(?:(?:[\x01-\x08\x0B\x0C\x0E-\x19\x7F]|[\x21-\x27\x2A-\x5B\x5D-\x7E])|(?:\\[\x00-\x08\x0B\x0C\x0E-\x7F])|(?1)))*(?:(?:[ \t]*(?:\r\n))?[ \t])?\)))|(?:(?:[ \t]*(?:\r\n))?[ \t])))?)))$/D', $address);
-	}
-}
+/**
+ * =============================================================================
+ * TIME & DATE FUNCTIONS
+ * =============================================================================
+ */
 
-function message($mes, $dest = "", $time = "3", $topnav = false)
+/**
+ * Get timezone selector options
+ *
+ * @return array Timezone options grouped by continent
+ */
+function getTimezoneSelector(): array
 {
-	require_once('includes/classes/class.template.php');
-	$template = new template();
-	$template->message($mes, $dest, $time, !$topnav);
-	exit;
+    $timezones = [];
+    $timezoneIdentifiers = DateTimeZone::listIdentifiers();
+
+    foreach ($timezoneIdentifiers as $value) {
+        if (preg_match('/^(America|Antarctica|Arctic|Asia|Atlantic|Europe|Indian|Pacific)\//', $value)) {
+            $ex = explode('/', $value);
+            $city = isset($ex[2]) ? $ex[1] . ' - ' . $ex[2] : $ex[1];
+            $timezones[$ex[0]][$value] = str_replace('_', ' ', $city);
+        }
+    }
+    
+    return $timezones;
 }
 
-function CalculateMaxPlanetFields($planet)
+/**
+ * Format date with locale support
+ *
+ * @param string $format Date format
+ * @param int $time Timestamp
+ * @param array|null $language Language data
+ * @return string Formatted date
+ */
+function localeDateFormat(string $format, int $time, ?array $language = null): string
 {
-	global $resource;
-	return $planet['field_max'] + ($planet[$resource[33]] * FIELDS_BY_TERRAFORMER) + ($planet[$resource[41]] * FIELDS_BY_MOONBASIS_LEVEL);
+    if ($language === null) {
+        global $LNG;
+        $language = $LNG;
+    }
+    
+    $weekDay = (int) date('w', $time);
+    $months = (int) date('n', $time) - 1;
+    
+    $format = str_replace(['D', 'M'], ['$D$', '$M$'], $format);
+    $format = str_replace('$D$', addcslashes($language['week_day'][$weekDay], 'A..z'), $format);
+    $format = str_replace('$M$', addcslashes($language['months'][$months], 'A..z'), $format);
+    
+    return $format;
 }
 
-function pretty_time($seconds)
+/**
+ * Format date with timezone support
+ *
+ * @param string $format Date format
+ * @param int|null $time Timestamp
+ * @param string|null $toTimeZone Target timezone
+ * @param array|null $language Language data
+ * @return string Formatted date
+ */
+function formatDate(string $format, ?int $time = null, ?string $toTimeZone = null, ?array $language = null): string
 {
-	global $LNG;
-	
-	/*$day	= floor($seconds / 86400);
-	$hour	= floor($seconds / 3600 % 24);
-	$minute	= floor($seconds / 60 % 60);
-	$second	= floor($seconds % 60);*/
-	$day	= floor($seconds / 86400);
-	$hour	= floor(floor($seconds / 3600) % 24);
-	$minute	= floor(floor($seconds / 60) % 60);
-	$second	= floor($seconds % 60);
+    if ($time === null) {
+        $time = TIMESTAMP;
+    } else {
+        $time = (int) floor($time);
+    }
 
-	$time  = '';
-
-	if($day > 0) {
-		$time .= sprintf('%d%s ', $day, $LNG['short_day']);
-	}
-
-	return $time.sprintf('%02d%s %02d%s %02d%s',
-		$hour, $LNG['short_hour'],
-		$minute, $LNG['short_minute'],
-		$second, $LNG['short_second']
-	);
+    if ($toTimeZone !== null) {
+        $date = new DateTime();
+        $date->setTimestamp($time);
+        
+        $time -= $date->getOffset();
+        try {
+            $date->setTimezone(new DateTimeZone($toTimeZone));
+        } catch (Exception $e) {
+            // Invalid timezone, continue with original time
+        }
+        $time += $date->getOffset();
+    }
+    
+    $format = localeDateFormat($format, $time, $language);
+    return date($format, $time);
 }
 
-function pretty_fly_time($seconds)
+/**
+ * Format time in a pretty way
+ *
+ * @param int $seconds Time in seconds
+ * @return string Formatted time
+ */
+function prettyTime(int $seconds): string
 {
-	$hour	= floor($seconds / 3600);
-	$minute	= floor(floor($seconds / 60) % 60);
-	$second	= floor($seconds % 60);
+    global $LNG;
+    
+    $day = (int) floor($seconds / 86400);
+    $hour = (int) floor(($seconds / 3600) % 24);
+    $minute = (int) floor(($seconds / 60) % 60);
+    $second = (int) floor($seconds % 60);
 
-	return sprintf('%02d:%02d:%02d', $hour, $minute, $second);
+    $time = '';
+    if ($day > 0) {
+        $time .= sprintf('%d%s ', $day, $LNG['short_day']);
+    }
+
+    return $time . sprintf('%02d%s %02d%s %02d%s',
+        $hour, $LNG['short_hour'],
+        $minute, $LNG['short_minute'],
+        $second, $LNG['short_second']
+    );
 }
 
-function GetStartAddressLink($FleetRow, $FleetType = '')
+/**
+ * Format flight time
+ *
+ * @param int $seconds Time in seconds
+ * @return string Formatted flight time
+ */
+function prettyFlyTime(int $seconds): string
 {
-	return '<a href="game.php?page=galaxy&amp;galaxy='.$FleetRow['fleet_start_galaxy'].'&amp;system='.$FleetRow['fleet_start_system'].'" class="'. $FleetType .'">['.$FleetRow['fleet_start_galaxy'].':'.$FleetRow['fleet_start_system'].':'.$FleetRow['fleet_start_planet'].']</a>';
+    $hour = (int) floor($seconds / 3600);
+    $minute = (int) floor(($seconds / 60) % 60);
+    $second = (int) floor($seconds % 60);
+
+    return sprintf('%02d:%02d:%02d', $hour, $minute, $second);
 }
 
-function GetTargetAddressLink($FleetRow, $FleetType = '')
+/**
+ * =============================================================================
+ * NUMBER FORMATTING
+ * =============================================================================
+ */
+
+/**
+ * Format number with decimal places
+ *
+ * @param float|int $number Number to format
+ * @param int $decimals Decimal places
+ * @return string Formatted number
+ */
+function prettyNumber(float|int $number, int $decimals = 0): string
 {
-	return '<a href="game.php?page=galaxy&amp;galaxy='.$FleetRow['fleet_end_galaxy'].'&amp;system='.$FleetRow['fleet_end_system'].'" class="'. $FleetType .'">['.$FleetRow['fleet_end_galaxy'].':'.$FleetRow['fleet_end_system'].':'.$FleetRow['fleet_end_planet'].']</a>';
+    return number_format(floatToString($number, $decimals), $decimals, ',', '.');
 }
 
-function BuildPlanetAddressLink($CurrentPlanet)
+/**
+ * Convert float to string with precision
+ *
+ * @param float|int $number Number to convert
+ * @param int $precision Decimal precision
+ * @param bool $output Whether to use dot as decimal separator
+ * @return string Converted string
+ */
+function floatToString(float|int $number, int $precision = 0, bool $output = false): string
 {
-	return '<a href="game.php?page=galaxy&amp;galaxy='.$CurrentPlanet['galaxy'].'&amp;system='.$CurrentPlanet['system'].'">['.$CurrentPlanet['galaxy'].':'.$CurrentPlanet['system'].':'.$CurrentPlanet['planet'].']</a>';
+    return $output ? str_replace(',', '.', sprintf('%.' . $precision . 'f', $number)) : sprintf('%.' . $precision . 'f', $number);
 }
 
-function pretty_number($n, $dec = 0)
+/**
+ * Format large numbers with units
+ *
+ * @param float|int $number Number to format
+ * @param int|null $decimals Decimal places
+ * @return string Formatted number with unit
+ */
+function shortlyNumber(float|int $number, ?int $decimals = null): string
 {
-	return number_format(floatToString($n, $dec), $dec, ',', '.');
+    $negate = $number < 0 ? -1 : 1;
+    $number = abs($number);
+    $units = ['', 'K', 'M', 'B', 'T', 'Q', 'Q+', 'S', 'S+', 'O', 'N'];
+    $key = 0;
+    
+    if ($number >= 1000000) {
+        ++$key;
+        while ($number >= 1000000) {
+            ++$key;
+            $number = $number / 1000000;
+        }
+    } elseif ($number >= 1000) {
+        ++$key;
+        $number = $number / 1000;
+    }
+    
+    $decimals = !is_numeric($decimals) ? 
+        ((int) (((int) $number != $number) && $key != 0 && $number != 0 && $number < 100)) : 
+        $decimals;
+        
+    return prettyNumber($negate * $number, $decimals) . '&nbsp;' . $units[$key];
 }
 
-function GetUserByID($userId, $GetInfo = "*")
+/**
+ * =============================================================================
+ * USER MANAGEMENT
+ * =============================================================================
+ */
+
+/**
+ * Get user by ID
+ *
+ * @param int $userId User ID
+ * @param string|array $getInfo Fields to retrieve
+ * @return array|null User data
+ */
+function getUserById(int $userId, string|array $getInfo = '*'): ?array
 {
-	if(is_array($GetInfo))
-	{
-		$GetOnSelect = implode(', ', $GetInfo);
-	}
-	else
-	{
-		$GetOnSelect = $GetInfo;
-	}
+    if (is_array($getInfo)) {
+        $getOnSelect = implode(', ', $getInfo);
+    } else {
+        $getOnSelect = $getInfo;
+    }
 
-	$sql = 'SELECT '.$GetOnSelect.' FROM %%USERS%% WHERE id = :userId';
-
-	$User = Database::get()->selectSingle($sql, array(
-		':userId'	=> $userId
-	));
-
-	return $User;
+    $sql = 'SELECT ' . $getOnSelect . ' FROM %%USERS%% WHERE id = :userId';
+    return Database::get()->selectSingle($sql, [':userId' => $userId]);
 }
 
-function makebr($text)
+/**
+ * Check noob protection
+ *
+ * @param array $ownerPlayer Owner player data
+ * @param array $targetPlayer Target player data
+ * @param array $player Current player data
+ * @return array Protection status
+ */
+function checkNoobProtection(array $ownerPlayer, array $targetPlayer, array $player): array
 {
-    // XHTML FIX for PHP 5.3.0
-	// Danke an Meikel
-	
-    $BR = "<br>\n";
-    return (version_compare(PHP_VERSION, "5.3.0", ">=")) ? nl2br($text, false) : strtr($text, array("\r\n" => $BR, "\r" => $BR, "\n" => $BR)); 
+    $config = Config::get();
+    
+    if ($config->noobprotection == 0 || 
+        $config->noobprotectiontime == 0 || 
+        $config->noobprotectionmulti == 0 || 
+        $player['banaday'] > TIMESTAMP || 
+        $player['onlinetime'] < TIMESTAMP - INACTIVE) {
+        return ['NoobPlayer' => false, 'StrongPlayer' => false];
+    }
+    
+    return [
+        'NoobPlayer' => (
+            ($targetPlayer['total_points'] <= $config->noobprotectiontime) &&
+            ($ownerPlayer['total_points'] > $targetPlayer['total_points'] * $config->noobprotectionmulti)
+        ),
+        'StrongPlayer' => (
+            ($ownerPlayer['total_points'] < $config->noobprotectiontime) &&
+            ($ownerPlayer['total_points'] * $config->noobprotectionmulti < $targetPlayer['total_points'])
+        ),
+    ];
 }
 
-function CheckNoobProtec($OwnerPlayer, $TargetPlayer, $Player)
+/**
+ * Check if user is in vacation mode
+ *
+ * @param array $user User data
+ * @return bool Vacation mode status
+ */
+function isVacationMode(array $user): bool
 {
-	$config	= Config::get();
-	if(
-		$config->noobprotection == 0 
-		|| $config->noobprotectiontime == 0 
-		|| $config->noobprotectionmulti == 0 
-		|| $Player['banaday'] > TIMESTAMP
-		|| $Player['onlinetime'] < TIMESTAMP - INACTIVE
-	) {
-		return array('NoobPlayer' => false, 'StrongPlayer' => false);
-	}
-	
-	return array(
-		'NoobPlayer' => (
-			/* WAHR: 
-				Wenn Spieler mehr als 25000 Punkte hat UND
-				Wenn ZielSpieler weniger als 80% der Punkte des Spieler hat.
-				ODER weniger als 5.000 hat.
-			*/
-			// Addional Comment: Letzteres ist eigentlich sinnfrei, bitte testen.a
-			($TargetPlayer['total_points'] <= $config->noobprotectiontime) && // Default: 25.000
-			($OwnerPlayer['total_points'] > $TargetPlayer['total_points'] * $config->noobprotectionmulti)
-		), 
-		'StrongPlayer' => (
-			/* WAHR: 
-				Wenn Spieler weniger als 5000 Punkte hat UND
-				Mehr als das funfache der eigende Punkte hat
-			*/
-			($OwnerPlayer['total_points'] < $config->noobprotectiontime) && // Default: 5.000
-			($OwnerPlayer['total_points'] * $config->noobprotectionmulti < $TargetPlayer['total_points'])
-		),
-	);
+    return $user['urlaubs_modus'] == 1;
 }
 
-function shortly_number($number, $decial = NULL)
+/**
+ * =============================================================================
+ * VALIDATION & SECURITY
+ * =============================================================================
+ */
+
+/**
+ * Validate email address
+ *
+ * @param string $address Email address
+ * @return bool Validation result
+ */
+function validateAddress(string $address): bool
 {
-	$negate	= $number < 0 ? -1 : 1;
-	$number	= abs($number);
-    $unit	= array("", "K", "M", "B", "T", "Q", "Q+", "S", "S+", "O", "N");
-	$key	= 0;
-	
-	if($number >= 1000000) {
-		++$key;
-		while($number >= 1000000)
-		{
-			++$key;
-			$number = $number / 1000000;
-		}
-	} elseif($number >= 1000) {
-		++$key;
-		$number = $number / 1000;
-	}
-	
-	$decial	= !is_numeric($decial) ? ((int) (((int)$number != $number) && $key != 0 && $number != 0 && $number < 100)) : $decial;
-	return pretty_number($negate * $number, $decial).'&nbsp;'.$unit[$key];
+    if (function_exists('filter_var')) {
+        return filter_var($address, FILTER_VALIDATE_EMAIL) !== false;
+    }
+    
+    // Fallback regex for older PHP versions
+    return preg_match('/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $address) === 1;
 }
 
-function floatToString($number, $Pro = 0, $output = false){
-	return $output ? str_replace(",",".", sprintf("%.".$Pro."f", $number)) : sprintf("%.".$Pro."f", $number);
-}
-
-function isModuleAvailable($ID)
+/**
+ * Generate random string
+ *
+ * @param int $length String length
+ * @return string Random string
+ */
+function getRandomString(int $length = 32): string
 {
-	global $USER;
-	$modules	= explode(';', Config::get()->moduls);
-
-	if(!isset($modules[$ID]))
-	{
-		$modules[$ID] = 1;
-	}
-
-	return $modules[$ID] == 1 || (isset($USER['authlevel']) && $USER['authlevel'] > AUTH_USR);
+    return bin2hex(random_bytes($length / 2));
 }
 
-function ClearCache()
+/**
+ * =============================================================================
+ * MODULE MANAGEMENT
+ * =============================================================================
+ */
+
+/**
+ * Check if module is available
+ *
+ * @param int $id Module ID
+ * @return bool Module availability
+ */
+function isModuleAvailable(int $id): bool
 {
-	$DIRS	= array('cache/', 'cache/templates/');
-	foreach($DIRS as $DIR) {
-		$FILES = array_diff(scandir($DIR), array('..', '.', '.htaccess'));
-		foreach($FILES as $FILE) {
-			if(is_dir(ROOT_PATH.$DIR.$FILE))
-				continue;
-				
-			unlink(ROOT_PATH.$DIR.$FILE);
-		}
-	}
+    global $USER;
+    $modules = explode(';', Config::get()->moduls);
 
+    if (!isset($modules[$id])) {
+        $modules[$id] = 1;
+    }
 
-	$template = new template();
-	$template->clearAllCache();
-
-
-	require_once 'includes/classes/Cronjob.class.php';
-	Cronjob::reCalculateCronjobs();
-
-	$sql	= 'UPDATE %%PLANETS%% SET eco_hash = :ecoHash;';
-	Database::get()->update($sql, array(
-		':ecoHash'	=> ''
-	));
-	clearstatcache();
-
-	/* does no work on git.
-
-	// Find currently Revision
-
-	$REV = 0;
-
-	$iterator = new RecursiveDirectoryIterator(ROOT_PATH);
-	foreach(new RecursiveIteratorIterator($iterator, RecursiveIteratorIterator::CHILD_FIRST) as $file) {
-		if (false == $file->isDir()) {
-			$CONTENT	= file_get_contents($file->getPathname());
-			
-			preg_match('!\$'.'Id: [^ ]+ ([0-9]+)!', $CONTENT, $match);
-			
-			if(isset($match[1]) && is_numeric($match[1]))
-			{
-				$REV	= max($REV, $match[1]);
-			}
-		}
-	}
-	
-	$config->VERSION	= $version[0].'.'.$version[1].'.'.$REV;
-	*/
-
-	$config		= Config::get();
-	$version	= explode('.', $config->VERSION);
-	$config->VERSION	= $version[0].'.'.$version[1].'.'.'git';
-	$config->save();
-	
+    return $modules[$id] == 1 || (isset($USER['authlevel']) && $USER['authlevel'] > AUTH_USR);
 }
 
-function allowedTo($side)
+/**
+ * Check user permissions
+ *
+ * @param string $side Permission side
+ * @return bool Permission status
+ */
+function allowedTo(string $side): bool
 {
-	global $USER;
-	return ($USER['authlevel'] == AUTH_ADM || (isset($USER['rights']) && $USER['rights'][$side] == 1));
+    global $USER;
+    return ($USER['authlevel'] == AUTH_ADM || (isset($USER['rights']) && $USER['rights'][$side] == 1));
 }
 
-function isactiveDMExtra($Extra, $Time) {
-	return $Time - $Extra <= 0;
-}
+/**
+ * =============================================================================
+ * DARK MATTER FUNCTIONS
+ * =============================================================================
+ */
 
-function DMExtra($Extra, $Time, $true, $false) {
-	return isactiveDMExtra($Extra, $Time) ? $true : $false;
-}
-
-function getRandomString() {
-	return md5(uniqid());
-}
-
-function isVacationMode($USER)
+/**
+ * Check if dark matter extra is active
+ *
+ * @param int $extra Extra timestamp
+ * @param int $time Current time
+ * @return bool Active status
+ */
+function isActiveDMExtra(int $extra, int $time): bool
 {
-	return ($USER['urlaubs_modus'] == 1) ? true : false;
+    return $time - $extra <= 0;
 }
 
-function clearGIF() {
-	header('Cache-Control: no-cache');
-	header('Content-type: image/gif');
-	header('Content-length: 43');
-	header('Expires: 0');
-	echo("\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x21\xF9\x04\x01\x00\x00\x00\x00\x2C\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3B");
-	exit;
+/**
+ * Dark matter extra helper
+ *
+ * @param int $extra Extra timestamp
+ * @param int $time Current time
+ * @param mixed $true Value if active
+ * @param mixed $false Value if inactive
+ * @return mixed Result value
+ */
+function DMExtra(int $extra, int $time, mixed $true, mixed $false): mixed
+{
+    return isActiveDMExtra($extra, $time) ? $true : $false;
 }
 
+/**
+ * =============================================================================
+ * UI HELPERS
+ * =============================================================================
+ */
 
-function friendly_severity($severity) {
+/**
+ * Convert line breaks to HTML
+ *
+ * @param string $text Text to convert
+ * @return string Converted text
+ */
+function makeBr(string $text): string
+{
+    $br = "<br>\n";
+    return nl2br($text, false);
+}
+
+/**
+ * Get start address link for fleet
+ *
+ * @param array $fleetRow Fleet data
+ * @param string $fleetType Fleet type class
+ * @return string HTML link
+ */
+function getStartAddressLink(array $fleetRow, string $fleetType = ''): string
+{
+    return '<a href="game.php?page=galaxy&amp;galaxy=' . $fleetRow['fleet_start_galaxy'] . 
+           '&amp;system=' . $fleetRow['fleet_start_system'] . '" class="' . $fleetType . '">[' . 
+           $fleetRow['fleet_start_galaxy'] . ':' . $fleetRow['fleet_start_system'] . ':' . 
+           $fleetRow['fleet_start_planet'] . ']</a>';
+}
+
+/**
+ * Get target address link for fleet
+ *
+ * @param array $fleetRow Fleet data
+ * @param string $fleetType Fleet type class
+ * @return string HTML link
+ */
+function getTargetAddressLink(array $fleetRow, string $fleetType = ''): string
+{
+    return '<a href="game.php?page=galaxy&amp;galaxy=' . $fleetRow['fleet_end_galaxy'] . 
+           '&amp;system=' . $fleetRow['fleet_end_system'] . '" class="' . $fleetType . '">[' . 
+           $fleetRow['fleet_end_galaxy'] . ':' . $fleetRow['fleet_end_system'] . ':' . 
+           $fleetRow['fleet_end_planet'] . ']</a>';
+}
+
+/**
+ * Build planet address link
+ *
+ * @param array $currentPlanet Planet data
+ * @return string HTML link
+ */
+function buildPlanetAddressLink(array $currentPlanet): string
+{
+    return '<a href="game.php?page=galaxy&amp;galaxy=' . $currentPlanet['galaxy'] . 
+           '&amp;system=' . $currentPlanet['system'] . '">[' . 
+           $currentPlanet['galaxy'] . ':' . $currentPlanet['system'] . ':' . 
+           $currentPlanet['planet'] . ']</a>';
+}
+
+/**
+ * =============================================================================
+ * CACHE MANAGEMENT
+ * =============================================================================
+ */
+
+/**
+ * Clear all caches
+ */
+function clearCache(): void
+{
+    $dirs = ['cache/', 'cache/templates/'];
+    
+    foreach ($dirs as $dir) {
+        $files = array_diff(scandir($dir), ['..', '.', '.htaccess']);
+        foreach ($files as $file) {
+            if (is_dir(ROOT_PATH . $dir . $file)) {
+                continue;
+            }
+            unlink(ROOT_PATH . $dir . $file);
+        }
+    }
+
+    $template = new template();
+    $template->clearAllCache();
+
+    require_once 'includes/classes/Cronjob.class.php';
+    Cronjob::reCalculateCronjobs();
+
+    $sql = 'UPDATE %%PLANETS%% SET eco_hash = :ecoHash;';
+    Database::get()->update($sql, [':ecoHash' => '']);
+    
+    clearstatcache();
+
+    $config = Config::get();
+    $version = explode('.', $config->VERSION);
+    $config->VERSION = $version[0] . '.' . $version[1] . '.git';
+    $config->save();
+}
+
+/**
+ * =============================================================================
+ * ERROR HANDLING
+ * =============================================================================
+ */
+
+/**
+ * Get friendly error severity name
+ *
+ * @param int $severity Error severity
+ * @return string Friendly severity name
+ */
+function friendlySeverity(int $severity): string
+{
     $names = [];
-
     $consts = array_flip(array_slice(get_defined_constants(true)['Core'], 0, 15, true));
 
     foreach ($consts as $code => $name) {
-        if ($severity & $code) $names []= $name;
+        if ($severity & $code) {
+            $names[] = $name;
+        }
     }
 
-    return join(' | ', $names);
+    return implode(' | ', $names);
 }
 
-
-
-/*
- * Handler for exceptions
+/**
+ * Exception handler
  *
- * @param object
- * @return Exception
+ * @param Throwable $exception Exception to handle
  */
-function exceptionHandler($exception)
+function exceptionHandler(Throwable $exception): void
 {
-	/** @var $exception ErrorException|Exception */
+    if (!headers_sent()) {
+        if (!class_exists('HTTP', false)) {
+            require_once 'includes/classes/HTTP.class.php';
+        }
+        HTTP::sendHeader('HTTP/1.1 503 Service Unavailable');
+    }
 
-	if(!headers_sent()) {
-		if (!class_exists('HTTP', false)) {
-			require_once('includes/classes/HTTP.class.php');
-		}
-		
-		HTTP::sendHeader('HTTP/1.1 503 Service Unavailable');
-	}
-
-	if(method_exists($exception, 'getSeverity')) {
-		$errno	= friendly_severity($exception->getSeverity());
-	} else {
-		$errno	= E_USER_ERROR;
-	}
-	
-	$errorType = array(
-		'E_ERROR'				=> 'ERROR',
-		'E_WARNING'			=> 'WARNING',
-		'E_PARSE'				=> 'PARSING ERROR',
-		'E_NOTICE'			=> 'NOTICE',
-		'E_CORE_ERROR'		=> 'CORE ERROR',
-		'E_CORE_WARNING'   	=> 'CORE WARNING',
-		'E_COMPILE_ERROR'		=> 'COMPILE ERROR',
-		'E_COMPILE_WARNING'	=> 'COMPILE WARNING',
-		'E_USER_ERROR'		=> 'USER ERROR',
-		'E_USER_WARNING'		=> 'USER WARNING',
-		'E_USER_NOTICE'		=> 'USER NOTICE',
-		'E_STRICT'			=> 'STRICT NOTICE',
-		'E_RECOVERABLE_ERROR'	=> 'RECOVERABLE ERROR',
-		'E_DEPRECATED'		=> 'DEPRECATED'
-	);
-	
-	if(file_exists(ROOT_PATH.'install/VERSION'))
-	{
-		$VERSION	= file_get_contents(ROOT_PATH.'install/VERSION').' (FILE)';
-	}
-	else
-	{
-		$VERSION	= 'UNKNOWN';
-	}
-	$gameName	= '-';
-	
-	if(MODE !== 'INSTALL')
-	{
-		try
-		{
-			$config		= Config::get();
-			$gameName	= $config->game_name;
-			$VERSION	= $config->VERSION;
-		} catch(ErrorException $e) {
-		}
-	}
-	
-	
-	$DIR		= MODE == 'INSTALL' ? '..' : '.';
-	ob_start();
-	echo '<!DOCTYPE html>
-<!--[if lt IE 7 ]> <html lang="de" class="no-js ie6"> <![endif]-->
-<!--[if IE 7 ]>    <html lang="de" class="no-js ie7"> <![endif]-->
-<!--[if IE 8 ]>    <html lang="de" class="no-js ie8"> <![endif]-->
-<!--[if IE 9 ]>    <html lang="de" class="no-js ie9"> <![endif]-->
-<!--[if (gt IE 9)|!(IE)]><!--> <html lang="de" class="no-js"> <!--<![endif]-->
+    $errno = method_exists($exception, 'getSeverity') ? 
+        friendlySeverity($exception->getSeverity()) : 
+        E_USER_ERROR;
+    
+    $errorType = [
+        'E_ERROR' => 'ERROR',
+        'E_WARNING' => 'WARNING',
+        'E_PARSE' => 'PARSING ERROR',
+        'E_NOTICE' => 'NOTICE',
+        'E_CORE_ERROR' => 'CORE ERROR',
+        'E_CORE_WARNING' => 'CORE WARNING',
+        'E_COMPILE_ERROR' => 'COMPILE ERROR',
+        'E_COMPILE_WARNING' => 'COMPILE WARNING',
+        'E_USER_ERROR' => 'USER ERROR',
+        'E_USER_WARNING' => 'USER WARNING',
+        'E_USER_NOTICE' => 'USER NOTICE',
+        'E_STRICT' => 'STRICT NOTICE',
+        'E_RECOVERABLE_ERROR' => 'RECOVERABLE ERROR',
+        'E_DEPRECATED' => 'DEPRECATED'
+    ];
+    
+    $version = file_exists(ROOT_PATH . 'install/VERSION') ? 
+        file_get_contents(ROOT_PATH . 'install/VERSION') . ' (FILE)' : 
+        'UNKNOWN';
+    
+    $gameName = '-';
+    if (MODE !== 'INSTALL') {
+        try {
+            $config = Config::get();
+            $gameName = $config->game_name;
+            $version = $config->VERSION;
+        } catch (ErrorException $e) {
+            // Ignore config errors during error handling
+        }
+    }
+    
+    $dir = MODE == 'INSTALL' ? '..' : '.';
+    
+    // Modern error page with futuristic design
+    ob_start();
+    echo '<!DOCTYPE html>
+<html lang="en" class="no-js futuristic-error">
 <head>
-	<title>'.$gameName.'</title>
-	<meta name="generator" content="2Moons '.$VERSION.'">
-	<!-- 
-		This website is powered by 2Moons '.$VERSION.'
-		2Moons is a free Space Browsergame initially created by Jan Kröpke and licensed under GNU/GPL.
-		2Moons is copyright 2009-2013 of Jan Kröpke. Extensions are copyright of their respective owners.
-		Information and contribution at http://2moons.cc/
-	-->
-	<meta http-equiv="content-type" content="text/html; charset=UTF-8">
-	<link rel="stylesheet" type="text/css" href="'.$DIR.'/styles/resource/css/base/boilerplate.css?v='.$VERSION.'">
-	<link rel="stylesheet" type="text/css" href="'.$DIR.'/styles/resource/css/ingame/main.css?v='.$VERSION.'">
-	<link rel="stylesheet" type="text/css" href="'.$DIR.'/styles/resource/css/base/jquery.css?v='.$VERSION.'">
-	<link rel="stylesheet" type="text/css" href="'.$DIR.'/styles/theme/gow/formate.css?v='.$VERSION.'">
-	<link rel="shortcut icon" href="./favicon.ico" type="image/x-icon">
-	<script type="text/javascript">
-	var ServerTimezoneOffset = -3600;
-	var serverTime 	= new Date(2012, 2, 12, 14, 43, 36);
-	var startTime	= serverTime.getTime();
-	var localTime 	= serverTime;
-	var localTS 	= startTime;
-	var Gamename	= document.title;
-	var Ready		= "Fertig";
-	var Skin		= "'.$DIR.'/styles/theme/gow/";
-	var Lang		= "de";
-	var head_info	= "Information";
-	var auth		= 3;
-	var days 		= ["So","Mo","Di","Mi","Do","Fr","Sa"] 
-	var months 		= ["Jan","Feb","Mar","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"] ;
-	var tdformat	= "[M] [D] [d] [H]:[i]:[s]";
-	var queryString	= "";
-
-	setInterval(function() {
-		serverTime.setSeconds(serverTime.getSeconds()+1);
-	}, 1000);
-	</script>
-	<script type="text/javascript" src="'.$DIR.'/scripts/base/jquery.js?v=2123"></script>
-	<script type="text/javascript" src="'.$DIR.'/scripts/base/jquery.ui.js?v=2123"></script>
-	<script type="text/javascript" src="'.$DIR.'/scripts/base/jquery.cookie.js?v=2123"></script>
-	<script type="text/javascript" src="'.$DIR.'/scripts/base/jquery.fancybox.js?v=2123"></script>
-	<script type="text/javascript" src="'.$DIR.'/scripts/base/jquery.validationEngine.js?v=2123"></script>
-	<script type="text/javascript" src="'.$DIR.'/scripts/base/tooltip.js?v=2123"></script>
-	<script type="text/javascript" src="'.$DIR.'/scripts/game/base.js?v=2123"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>' . htmlspecialchars($gameName) . ' - System Error</title>
+    <meta name="generator" content="2Moons ' . htmlspecialchars($version) . '">
+    <style>
+        body {
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+            color: #00ffff;
+            font-family: "Courier New", monospace;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .error-container {
+            background: rgba(0, 255, 255, 0.1);
+            border: 2px solid #00ffff;
+            border-radius: 10px;
+            padding: 30px;
+            max-width: 800px;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.3);
+            animation: glow 2s ease-in-out infinite alternate;
+        }
+        @keyframes glow {
+            from { box-shadow: 0 0 30px rgba(0, 255, 255, 0.3); }
+            to { box-shadow: 0 0 50px rgba(0, 255, 255, 0.6); }
+        }
+        h1 { color: #ff4444; text-align: center; margin-bottom: 20px; }
+        .error-details { margin: 15px 0; }
+        .error-details strong { color: #ffff00; }
+        .error-details pre { 
+            background: rgba(0, 0, 0, 0.5); 
+            padding: 15px; 
+            border-radius: 5px; 
+            overflow-x: auto;
+            border-left: 3px solid #ff4444;
+        }
+        .timestamp { color: #888; font-size: 0.9em; }
+    </style>
 </head>
-<body id="overview" class="full">
-<table width="960">
-	<tr>
-		<th></th>
-	</tr>
-	<tr>
-		<td class="left">
-			<b>Message: </b>'.$exception->getMessage().'<br>
-			<b>File: </b>'.$exception->getFile().'<br>
-			<b>Line: </b>'.$exception->getLine().'<br>
-			<b>URL: </b>'.PROTOCOL.HTTP_HOST.$_SERVER['REQUEST_URI'].'<br>
-			<b>PHP-Version: </b>'.PHP_VERSION.'<br>
-			<b>PHP-API: </b>'.php_sapi_name().'<br>
-			<b>2Moons Version: </b>'.$VERSION.'<br>
-			<b>Debug Backtrace:</b><br>'.makebr(htmlspecialchars($exception->getTraceAsString())).'
-		</td>
-	</tr>
-</table>
+<body>
+    <div class="error-container">
+        <h1>⚠️ SYSTEM ERROR DETECTED ⚠️</h1>
+        <div class="error-details">
+            <strong>Message:</strong> ' . htmlspecialchars($exception->getMessage()) . '<br>
+            <strong>File:</strong> ' . htmlspecialchars($exception->getFile()) . '<br>
+            <strong>Line:</strong> ' . $exception->getLine() . '<br>
+            <strong>URL:</strong> ' . htmlspecialchars(PROTOCOL . HTTP_HOST . $_SERVER['REQUEST_URI']) . '<br>
+            <strong>PHP Version:</strong> ' . PHP_VERSION . '<br>
+            <strong>PHP API:</strong> ' . php_sapi_name() . '<br>
+            <strong>2Moons Version:</strong> ' . htmlspecialchars($version) . '<br>
+            <strong>Timestamp:</strong> <span class="timestamp">' . date('Y-m-d H:i:s', TIMESTAMP) . '</span><br>
+            <strong>Debug Backtrace:</strong><br>
+            <pre>' . htmlspecialchars($exception->getTraceAsString()) . '</pre>
+        </div>
+    </div>
 </body>
 </html>';
 
-	echo str_replace(array('\\', ROOT_PATH, substr(ROOT_PATH, 0, 15)), array('/', '/', 'FILEPATH '), ob_get_clean());
-	
-	$errorText	= date("[d-M-Y H:i:s]", TIMESTAMP).': "'.strip_tags($exception->getMessage())."\"\r\n";
-	$errorText	.= 'File: '.$exception->getFile().' | Line: '.$exception->getLine()."\r\n";
-	$errorText	.= 'URL: '.PROTOCOL.HTTP_HOST.$_SERVER['REQUEST_URI'].' | Version: '.$VERSION."\r\n";
-	$errorText	.= "Stack trace:\r\n";
-	$errorText	.= str_replace(ROOT_PATH, '/', htmlspecialchars(str_replace('\\', '/',$exception->getTraceAsString())))."\r\n";
-	
-	if(is_writable('includes/error.log'))
-	{
-		file_put_contents('includes/error.log', $errorText, FILE_APPEND);
-	}
+    echo str_replace([ROOT_PATH, substr(ROOT_PATH, 0, 15)], ['/', 'FILEPATH '], ob_get_clean());
+    
+    // Log error to file
+    $errorText = date('[d-M-Y H:i:s]', TIMESTAMP) . ': "' . strip_tags($exception->getMessage()) . "\"\r\n";
+    $errorText .= 'File: ' . $exception->getFile() . ' | Line: ' . $exception->getLine() . "\r\n";
+    $errorText .= 'URL: ' . PROTOCOL . HTTP_HOST . $_SERVER['REQUEST_URI'] . ' | Version: ' . $version . "\r\n";
+    $errorText .= "Stack trace:\r\n";
+    $errorText .= str_replace(ROOT_PATH, '/', htmlspecialchars(str_replace('\\', '/', $exception->getTraceAsString()))) . "\r\n";
+    
+    if (is_writable('includes/error.log')) {
+        file_put_contents('includes/error.log', $errorText, FILE_APPEND);
+    }
 }
-/*
+
+/**
+ * Error handler
  *
+ * @param int $errno Error number
+ * @param string $errstr Error string
+ * @param string $errfile Error file
+ * @param int $errline Error line
+ * @return bool Whether error was handled
  * @throws ErrorException
- *
- * @return bool If its an hidden error.
- *
  */
-function errorHandler($errno, $errstr, $errfile, $errline)
+function errorHandler(int $errno, string $errstr, string $errfile, int $errline): bool
 {
     if (!($errno & error_reporting())) {
         return false;
     }
-	
-	throw new ErrorException($errstr, 0, $errno, $errfile, $errline);
+    
+    throw new ErrorException($errstr, 0, $errno, $errfile, $errline);
 }
 
-// "workaround" for PHP version pre 5.3.0
-if (!function_exists('array_replace_recursive'))
+/**
+ * =============================================================================
+ * UTILITY FUNCTIONS
+ * =============================================================================
+ */
+
+/**
+ * Display message and exit
+ *
+ * @param string $message Message to display
+ * @param string $destination Redirect destination
+ * @param string $time Display time
+ * @param bool $topnav Show top navigation
+ */
+function message(string $message, string $destination = '', string $time = '3', bool $topnav = false): void
 {
-    function array_replace_recursive()
+    require_once 'includes/classes/class.template.php';
+    $template = new template();
+    $template->message($message, $destination, $time, !$topnav);
+    exit;
+}
+
+/**
+ * Clear GIF response
+ */
+function clearGif(): void
+{
+    header('Cache-Control: no-cache');
+    header('Content-type: image/gif');
+    header('Content-length: 43');
+    header('Expires: 0');
+    echo "\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x21\xF9\x04\x01\x00\x00\x00\x00\x2C\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3B";
+    exit;
+}
+
+/**
+ * Array replace recursive fallback for PHP < 5.3
+ */
+if (!function_exists('array_replace_recursive')) {
+    function array_replace_recursive(): array
     {
         if (!function_exists('recurse')) {
-            function recurse($array, $array1)
+            function recurse(array $array, array $array1): array
             {
-                foreach ($array1 as $key => $value)
-                {
-                    // create new key in $array, if it is empty or not an array
-                    if (!isset($array[$key]) || (isset($array[$key]) && !is_array($array[$key])))
-                    {
-                        $array[$key] = array();
+                foreach ($array1 as $key => $value) {
+                    if (!isset($array[$key]) || (isset($array[$key]) && !is_array($array[$key]))) {
+                        $array[$key] = [];
                     }
 
-                    // overwrite the value in the base array
-                    if (is_array($value))
-                    {
+                    if (is_array($value)) {
                         $value = recurse($array[$key], $value);
                     }
                     $array[$key] = $value;
@@ -645,18 +836,15 @@ if (!function_exists('array_replace_recursive'))
             }
         }
 
-        // handle the arguments, merge one by one
         $args = func_get_args();
         $array = $args[0];
-        if (!is_array($array))
-        {
+        if (!is_array($array)) {
             return $array;
         }
+        
         $count = count($args);
-        for ($i = 1; $i < $count; ++$i)
-        {
-            if (is_array($args[$i]))
-            {
+        for ($i = 1; $i < $count; ++$i) {
+            if (is_array($args[$i])) {
                 $array = recurse($array, $args[$i]);
             }
         }
